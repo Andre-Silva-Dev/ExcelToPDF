@@ -87,7 +87,10 @@ def converter_com_excel(caminho_excel: str, caminho_pdf: str, orientacao: str = 
             xl_orientacao = _XL_LANDSCAPE if orientacao == "paisagem" else _XL_PORTRAIT
 
         for i in range(1, pasta.Sheets.Count + 1):
-            pasta.Sheets(i).PageSetup.Orientation = xl_orientacao
+            planilha = pasta.Sheets(i)
+            planilha.PageSetup.Orientation = xl_orientacao
+            # Restringe a impressão ao conteúdo preenchido da planilha
+            planilha.PageSetup.PrintArea = planilha.UsedRange.Address
 
         # xlTypePDF = 0
         pasta.ExportAsFixedFormat(0, caminho_pdf)
@@ -177,8 +180,15 @@ def converter_com_libreoffice(caminho_excel: str, caminho_pdf: str, orientacao: 
             orientacao_openpyxl = (
                 "landscape" if orientacao == "paisagem" else "portrait"
             )
+            from openpyxl.utils import get_column_letter  # type: ignore[import]
             for ws in wb.worksheets:
                 ws.page_setup.orientation = orientacao_openpyxl
+                # Restringe a área de impressão ao conteúdo preenchido
+                if ws.max_row and ws.max_column:
+                    min_col = get_column_letter(ws.min_column or 1)
+                    max_col = get_column_letter(ws.max_column)
+                    min_row = ws.min_row or 1
+                    ws.print_area = f"{min_col}{min_row}:{max_col}{ws.max_row}"
             wb.save(arquivo_temp)
             wb.close()
 

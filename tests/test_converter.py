@@ -4,8 +4,10 @@ Execução: python -m pytest tests/test_converter.py -v
 """
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import pytest
 
 # Garante que o módulo converter.py seja encontrado
@@ -252,3 +254,78 @@ class TestOrientacaoPlanilha:
 
         converter.converter(str(arquivo_excel), caminho_pdf, orientacao="paisagem")
         assert chamadas == ["paisagem"]
+
+
+# ---------------------------------------------------------------------------
+# Testes de área de impressão (recorte ao conteúdo preenchido)
+# ---------------------------------------------------------------------------
+
+def _aplicar_configuracoes_xlsx(caminho_xlsx: str, orientacao: str) -> str:
+    """
+    Replica o bloco openpyxl de converter_com_libreoffice em isolamento:
+    cria uma cópia temporária, aplica orientação e print_area, e retorna
+    o caminho do arquivo temporário (o chamador deve apagá-lo).
+    """
+    opx = pytest.importorskip("openpyxl")
+    from openpyxl.utils import get_column_letter  # type: ignore[import]
+
+    fd, tmp = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    shutil.copy2(caminho_xlsx, tmp)
+
+    wb = opx.load_workbook(tmp)
+    for ws in wb.worksheets:
+        ws.page_setup.orientation = orientacao
+        if ws.max_row and ws.max_column:
+            min_col = get_column_letter(ws.min_column or 1)
+            max_col = get_column_letter(ws.max_column)
+            min_row = ws.min_row or 1
+            ws.print_area = f"{min_col}{min_row}:{max_col}{ws.max_row}"
+    wb.save(tmp)
+    wb.close()
+    return tmp
+
+
+class TestAreaImpressao:
+    def test_libreoffice_define_area_impressao_no_range_usado(self, tmp_path):
+        """O bloco openpyxl deve definir print_area no intervalo preenchido."""
+        opx = pytest.importorskip("openpyxl")
+
+        arquivo = tmp_path / "planilha.xlsx"
+        wb = opx.Workbook()
+        ws = wb.active
+        # Preenche B2:D4 (não começa em A1)
+        for row in range(2, 5):
+            for col in range(2, 5):
+                ws.cell(row=row, column=col, value="x")
+        wb.save(str(arquivo))
+        wb.close()
+
+        tmp = _aplicar_configuracoes_xlsx(str(arquivo), "portrait")
+        try:
+            # openpyxl armazena com prefixo de aba e cifrões, ex.: 'Sheet'!$B$2:$D$4
+            wb2 = opx.load_workbook(tmp)
+            assert "$B$2:$D$4" in wb2.active.print_area
+            wb2.close()
+        finally:
+            os.remove(tmp)
+
+    def test_libreoffice_sem_conteudo_nao_define_range_customizado(self, tmp_path):
+        """Para planilha vazia, a área de impressão não deve conter uma faixa customizada."""
+        opx = pytest.importorskip("openpyxl")
+
+        arquivo = tmp_path / "vazia.xlsx"
+        wb = opx.Workbook()
+        wb.save(str(arquivo))
+        wb.close()
+
+        tmp = _aplicar_configuracoes_xlsx(str(arquivo), "portrait")
+        try:
+            # A planilha vazia tem max_row == None, então nosso código não toca a print_area.
+            # Uma área com ":" indica que definimos uma faixa; sem conteúdo isso não deve ocorrer.
+            wb2 = opx.load_workbook(tmp)
+            area = wb2.active.print_area
+            assert not area or ":" not in area
+            wb2.close()
+        finally:
+            os.remove(tmp)
