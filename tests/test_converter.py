@@ -146,7 +146,7 @@ class TestConverter:
 
         chamadas = []
 
-        def libreoffice_fake(caminho_excel, caminho_pdf):
+        def libreoffice_fake(caminho_excel, caminho_pdf, orientacao="auto"):
             chamadas.append((caminho_excel, caminho_pdf))
 
         monkeypatch.setattr(converter, "converter_com_libreoffice", libreoffice_fake)
@@ -165,7 +165,7 @@ class TestConverter:
 
         chamadas = []
 
-        def excel_fake(caminho_excel, caminho_pdf):
+        def excel_fake(caminho_excel, caminho_pdf, orientacao="auto"):
             chamadas.append((caminho_excel, caminho_pdf))
 
         monkeypatch.setattr(converter, "converter_com_excel", excel_fake)
@@ -178,3 +178,77 @@ class TestConverter:
 
         assert resultado == "Excel"
         assert len(chamadas) == 1
+
+
+# ---------------------------------------------------------------------------
+# Testes de detecção de orientação
+# ---------------------------------------------------------------------------
+
+class TestOrientacaoPlanilha:
+    def test_xls_retorna_paisagem(self, tmp_path):
+        # .xls não é suportado por openpyxl; deve retornar padrão conservador
+        arquivo = tmp_path / "planilha.xls"
+        arquivo.write_bytes(b"conteudo falso")
+        assert converter._orientacao_planilha(str(arquivo)) == "paisagem"
+
+    def test_openpyxl_indisponivel_retorna_paisagem(self, tmp_path, monkeypatch):
+        # Simula ausência do openpyxl
+        import builtins
+        import_original = builtins.__import__
+
+        def import_sem_openpyxl(name, *args, **kwargs):
+            if name == "openpyxl":
+                raise ImportError("openpyxl não instalado")
+            return import_original(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_sem_openpyxl)
+
+        arquivo = tmp_path / "planilha.xlsx"
+        arquivo.write_bytes(b"conteudo falso")
+        assert converter._orientacao_planilha(str(arquivo)) == "paisagem"
+
+    def test_xlsx_com_mais_colunas_retorna_paisagem(self, tmp_path):
+        openpyxl = pytest.importorskip("openpyxl")
+        arquivo = tmp_path / "wide.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        # Preenche 10 colunas × 3 linhas → mais colunas → paisagem
+        for col in range(1, 11):
+            ws.cell(row=1, column=col, value="x")
+        for row in range(2, 4):
+            ws.cell(row=row, column=1, value="x")
+        wb.save(str(arquivo))
+        wb.close()
+        assert converter._orientacao_planilha(str(arquivo)) == "paisagem"
+
+    def test_xlsx_com_mais_linhas_retorna_retrato(self, tmp_path):
+        openpyxl = pytest.importorskip("openpyxl")
+        arquivo = tmp_path / "tall.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        # Preenche 3 colunas × 10 linhas → mais linhas → retrato
+        for row in range(1, 11):
+            ws.cell(row=row, column=1, value="x")
+        for col in range(2, 4):
+            ws.cell(row=1, column=col, value="x")
+        wb.save(str(arquivo))
+        wb.close()
+        assert converter._orientacao_planilha(str(arquivo)) == "retrato"
+
+    def test_converter_repassa_orientacao_ao_libreoffice(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(converter, "_excel_disponivel", lambda: False)
+        monkeypatch.setattr(converter, "_caminho_libreoffice", lambda: "/usr/bin/soffice")
+
+        chamadas = []
+
+        def libreoffice_fake(caminho_excel, caminho_pdf, orientacao="auto"):
+            chamadas.append(orientacao)
+
+        monkeypatch.setattr(converter, "converter_com_libreoffice", libreoffice_fake)
+
+        arquivo_excel = tmp_path / "planilha.xlsx"
+        arquivo_excel.write_bytes(b"conteudo falso")
+        caminho_pdf = str(tmp_path / "planilha.pdf")
+
+        converter.converter(str(arquivo_excel), caminho_pdf, orientacao="paisagem")
+        assert chamadas == ["paisagem"]

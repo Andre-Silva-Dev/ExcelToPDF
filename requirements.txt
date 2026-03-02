@@ -6,5 +6,10 @@
 #   sudo apt install python3-tk  (Ubuntu/Debian)
 #   sudo dnf install python3-tkinter  (Fedora)
 
+# Recomendado: usado para detectar e aplicar orientação automática (retrato/paisagem)
+# na conversão via LibreOffice. Também necessário para arquivos .xlsx.
+# pip install openpyxl
+openpyxl
+
 # Somente necessário para usar o Microsoft Excel no Windows:
 # pywin32

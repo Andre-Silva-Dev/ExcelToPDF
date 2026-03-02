@@ -15,14 +15,48 @@ import platform
 import subprocess
 import shutil
 
+# Constantes para orientação de página do Microsoft Excel
+_XL_PORTRAIT = 1
+_XL_LANDSCAPE = 2
+
+
+# ---------------------------------------------------------------------------
+# DETECÇÃO DE ORIENTAÇÃO
+# ---------------------------------------------------------------------------
+
+def _orientacao_planilha(caminho_excel: str) -> str:
+    """
+    Detecta a orientação recomendada para o PDF com base nas dimensões
+    da planilha ativa. Retorna 'paisagem' se houver mais colunas do que
+    linhas (planilha mais larga), ou 'retrato' caso contrário.
+
+    Funciona apenas com arquivos .xlsx (via openpyxl).
+    Para .xls ou em caso de erro, retorna 'paisagem' como padrão conservador
+    para evitar que conteúdos largos sejam cortados.
+    """
+    if os.path.splitext(caminho_excel)[1].lower() != ".xlsx":
+        return "paisagem"
+    try:
+        import openpyxl  # type: ignore[import]
+        wb = openpyxl.load_workbook(caminho_excel, read_only=True, data_only=True)
+        ws = wb.active
+        colunas = ws.max_column or 1
+        linhas = ws.max_row or 1
+        wb.close()
+        return "paisagem" if colunas > linhas else "retrato"
+    except Exception:
+        return "paisagem"
+
 
 # ---------------------------------------------------------------------------
 # CONVERSÃO: cenário 1 – Microsoft Excel instalado (Windows)
 # ---------------------------------------------------------------------------
 
-def converter_com_excel(caminho_excel: str, caminho_pdf: str) -> None:
+def converter_com_excel(caminho_excel: str, caminho_pdf: str, orientacao: str = "auto") -> None:
     """
     Converte o arquivo Excel para PDF usando o Microsoft Excel (Windows).
+
+    orientacao: 'auto' (detecta automaticamente), 'retrato' ou 'paisagem'.
     Levanta RuntimeError se algo der errado.
     """
     try:
@@ -41,6 +75,20 @@ def converter_com_excel(caminho_excel: str, caminho_pdf: str) -> None:
         excel.DisplayAlerts = False
 
         pasta = excel.Workbooks.Open(caminho_excel)
+
+        # Determina orientação: em modo "auto", decide pela primeira planilha
+        if orientacao == "auto":
+            primeira = pasta.Sheets(1)
+            usado = primeira.UsedRange
+            xl_orientacao = (
+                _XL_LANDSCAPE if usado.Columns.Count > usado.Rows.Count else _XL_PORTRAIT
+            )
+        else:
+            xl_orientacao = _XL_LANDSCAPE if orientacao == "paisagem" else _XL_PORTRAIT
+
+        for i in range(1, pasta.Sheets.Count + 1):
+            pasta.Sheets(i).PageSetup.Orientation = xl_orientacao
+
         # xlTypePDF = 0
         pasta.ExportAsFixedFormat(0, caminho_pdf)
     except Exception as erro:
@@ -93,9 +141,11 @@ def _caminho_libreoffice() -> str | None:
     return None
 
 
-def converter_com_libreoffice(caminho_excel: str, caminho_pdf: str) -> None:
+def converter_com_libreoffice(caminho_excel: str, caminho_pdf: str, orientacao: str = "auto") -> None:
     """
     Converte o arquivo Excel para PDF usando o LibreOffice.
+
+    orientacao: 'auto' (detecta automaticamente), 'retrato' ou 'paisagem'.
     Levanta RuntimeError se algo der errado.
     """
     soffice = _caminho_libreoffice()
@@ -107,6 +157,37 @@ def converter_com_libreoffice(caminho_excel: str, caminho_pdf: str) -> None:
 
     pasta_destino = os.path.dirname(caminho_pdf)
 
+    # Resolve orientação automática antes de criar arquivo temporário
+    if orientacao == "auto":
+        orientacao = _orientacao_planilha(caminho_excel)
+
+    # Para .xlsx, aplica a orientação em uma cópia temporária usando openpyxl
+    arquivo_a_converter = caminho_excel
+    arquivo_temp = None
+    if os.path.splitext(caminho_excel)[1].lower() == ".xlsx":
+        try:
+            import openpyxl  # type: ignore[import]
+            import tempfile
+
+            fd, arquivo_temp = tempfile.mkstemp(suffix=".xlsx")
+            os.close(fd)
+            shutil.copy2(caminho_excel, arquivo_temp)
+
+            wb = openpyxl.load_workbook(arquivo_temp)
+            orientacao_openpyxl = (
+                "landscape" if orientacao == "paisagem" else "portrait"
+            )
+            for ws in wb.worksheets:
+                ws.page_setup.orientation = orientacao_openpyxl
+            wb.save(arquivo_temp)
+            wb.close()
+
+            arquivo_a_converter = arquivo_temp
+        except ImportError:
+            pass  # openpyxl não disponível; converte sem ajustar orientação
+        except Exception:
+            pass  # arquivo inválido ou erro ao aplicar orientação; converte sem ajustar
+
     try:
         resultado = subprocess.run(
             [
@@ -116,7 +197,7 @@ def converter_com_libreoffice(caminho_excel: str, caminho_pdf: str) -> None:
                 "pdf",
                 "--outdir",
                 pasta_destino,
-                caminho_excel,
+                arquivo_a_converter,
             ],
             capture_output=True,
             text=True,
@@ -126,13 +207,19 @@ def converter_com_libreoffice(caminho_excel: str, caminho_pdf: str) -> None:
         raise RuntimeError("A conversão demorou demais e foi cancelada.") from None
     except Exception as erro:
         raise RuntimeError(f"Erro ao executar o LibreOffice: {erro}") from erro
+    finally:
+        if arquivo_temp and os.path.exists(arquivo_temp):
+            try:
+                os.remove(arquivo_temp)
+            except Exception:
+                pass
 
     if resultado.returncode != 0:
         detalhe = resultado.stderr.strip() or resultado.stdout.strip()
         raise RuntimeError(f"O LibreOffice retornou um erro:\n{detalhe}")
 
-    # O LibreOffice cria o PDF com o mesmo nome do Excel, mas extensão .pdf
-    nome_base = os.path.splitext(os.path.basename(caminho_excel))[0]
+    # O LibreOffice cria o PDF com o mesmo nome do arquivo de entrada, extensão .pdf
+    nome_base = os.path.splitext(os.path.basename(arquivo_a_converter))[0]
     pdf_gerado = os.path.join(pasta_destino, nome_base + ".pdf")
 
     # Se o usuário pediu um nome diferente, renomeia
@@ -170,19 +257,21 @@ def _excel_disponivel() -> bool:
         return False
 
 
-def converter(caminho_excel: str, caminho_pdf: str) -> str:
+def converter(caminho_excel: str, caminho_pdf: str, orientacao: str = "auto") -> str:
     """
     Escolhe automaticamente o método disponível (Excel ou LibreOffice)
     e realiza a conversão.
+
+    orientacao: 'auto' (detecta automaticamente), 'retrato' ou 'paisagem'.
     Retorna o nome do método utilizado ('Excel' ou 'LibreOffice').
     Levanta RuntimeError em caso de falha.
     """
     if _excel_disponivel():
-        converter_com_excel(caminho_excel, caminho_pdf)
+        converter_com_excel(caminho_excel, caminho_pdf, orientacao)
         return "Excel"
 
     if _caminho_libreoffice():
-        converter_com_libreoffice(caminho_excel, caminho_pdf)
+        converter_com_libreoffice(caminho_excel, caminho_pdf, orientacao)
         return "LibreOffice"
 
     raise RuntimeError(
