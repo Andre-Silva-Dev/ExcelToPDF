@@ -4,6 +4,7 @@ Execução: python -m pytest tests/test_converter.py -v
 """
 
 import os
+import subprocess
 import sys
 import pytest
 
@@ -92,8 +93,6 @@ class TestConverterComLibreoffice:
 
     def test_levanta_runtimeerror_em_falha_de_processo(self, tmp_path, monkeypatch):
         # Simula LibreOffice retornando erro
-        import subprocess
-
         monkeypatch.setattr(converter, "_caminho_libreoffice", lambda: "/usr/bin/soffice")
 
         fake_result = subprocess.CompletedProcess(
@@ -106,6 +105,22 @@ class TestConverterComLibreoffice:
         caminho_pdf = str(tmp_path / "planilha.pdf")
 
         with pytest.raises(RuntimeError, match="LibreOffice retornou um erro"):
+            converter.converter_com_libreoffice(str(arquivo_excel), caminho_pdf)
+
+    def test_levanta_runtimeerror_quando_pdf_nao_gerado(self, tmp_path, monkeypatch):
+        # Simula LibreOffice retornando sucesso mas sem criar o PDF
+        monkeypatch.setattr(converter, "_caminho_libreoffice", lambda: "/usr/bin/soffice")
+
+        fake_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake_result)
+
+        arquivo_excel = tmp_path / "planilha.xlsx"
+        arquivo_excel.write_bytes(b"conteudo falso")
+        caminho_pdf = str(tmp_path / "planilha.pdf")
+
+        with pytest.raises(RuntimeError, match="PDF não foi encontrado"):
             converter.converter_com_libreoffice(str(arquivo_excel), caminho_pdf)
 
 

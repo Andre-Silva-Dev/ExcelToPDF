@@ -1,7 +1,7 @@
 """
 ExcelToPDF - Conversor de Excel para PDF
 =========================================
-Ferramenta simples para converter arquivos .xlsx em PDF.
+Ferramenta simples para converter arquivos .xlsx e .xls em PDF.
 Funciona com Microsoft Excel instalado OU com LibreOffice (gratuito).
 
 Fluxo do programa:
@@ -11,35 +11,9 @@ Fluxo do programa:
 """
 
 import os
-import sys
 import platform
 import subprocess
 import shutil
-
-
-# ---------------------------------------------------------------------------
-# ENTRADA DO USUÁRIO
-# ---------------------------------------------------------------------------
-
-def selecionar_arquivo() -> str:
-    """
-    Abre uma janela para o usuário escolher o arquivo Excel (.xlsx).
-    Retorna o caminho completo do arquivo selecionado,
-    ou uma string vazia se o usuário cancelar.
-    """
-    import tkinter as tk
-    from tkinter import filedialog
-
-    root = tk.Tk()
-    root.withdraw()  # Oculta a janela principal do tkinter
-    root.attributes("-topmost", True)  # Garante que a janela fique na frente
-
-    arquivo = filedialog.askopenfilename(
-        title="Selecione o arquivo Excel",
-        filetypes=[("Arquivos Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*")],
-    )
-    root.destroy()
-    return arquivo
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +36,7 @@ def converter_com_excel(caminho_excel: str, caminho_pdf: str) -> None:
     excel = None
     pasta = None
     try:
-        excel = win32com.client.Dispatch("Excel.Application")
+        excel = win32com.client.DispatchEx("Excel.Application")
         excel.Visible = False
         excel.DisplayAlerts = False
 
@@ -166,6 +140,12 @@ def converter_com_libreoffice(caminho_excel: str, caminho_pdf: str) -> None:
         if os.path.exists(pdf_gerado):
             os.replace(pdf_gerado, caminho_pdf)
 
+    # Confirma que o PDF foi realmente criado (LibreOffice pode retornar 0 sem gerar saída)
+    if not os.path.exists(caminho_pdf):
+        raise RuntimeError(
+            f"LibreOffice indicou sucesso, mas o PDF não foi encontrado em: {caminho_pdf}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # DETECÇÃO AUTOMÁTICA DE MÉTODO DE CONVERSÃO
@@ -180,9 +160,12 @@ def _excel_disponivel() -> bool:
         import pythoncom  # type: ignore[import]  # noqa: F401
 
         pythoncom.CoInitialize()
-        app = win32com.client.Dispatch("Excel.Application")
-        app.Quit()
-        return True
+        try:
+            app = win32com.client.Dispatch("Excel.Application")
+            app.Quit()
+            return True
+        finally:
+            pythoncom.CoUninitialize()
     except Exception:
         return False
 

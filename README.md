@@ -124,7 +124,7 @@ O programa exibe mensagens amigáveis nos seguintes casos:
 - No **Windows**, a conversão via Excel requer que o Microsoft Excel esteja instalado e ativado.
 - O LibreOffice pode apresentar pequenas diferenças de formatação em relação ao Excel original (especialmente em arquivos com gráficos ou formatação avançada).
 - Em **macOS e Linux**, apenas a conversão via LibreOffice é suportada.
-- O programa converte **apenas a primeira planilha ativa** (comportamento padrão do Excel e LibreOffice).
+- O programa converte **todas as planilhas do arquivo Excel** em um único PDF (comportamento padrão do Excel e do LibreOffice).
 
 ---
 
